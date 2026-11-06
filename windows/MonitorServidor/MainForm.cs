@@ -35,12 +35,12 @@ internal sealed class MainForm : Form
     private ToolStripMenuItem _trayToggle = null!;
 
     private Label _dot = null!, _statusLabel = null!, _statsLabel = null!, _usbLabel = null!, _qualityLabel = null!;
-    private Label _modeLabel = null!, _vddLabel = null!;
+    private Label _modeLabel = null!;
     private ComboBox _modeCombo = null!, _detailCombo = null!;
     private NumericUpDown _fpsNum = null!;
     private TrackBar _qualityBar = null!;
     private CheckBox _autoStartCheck = null!;
-    private Button _startButton = null!, _installButton = null!;
+    private Button _startButton = null!;
     private TextBox _logBox = null!;
     private bool _installing;
 
@@ -203,7 +203,7 @@ internal sealed class MainForm : Form
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(760, 640);
+        ClientSize = new Size(760, 544);
 
         try { _appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         if (_appIcon != null) Icon = _appIcon;
@@ -222,16 +222,8 @@ internal sealed class MainForm : Form
         _modeLabel = AddLabel(conn, "", 470, 58, 9.5f, false, TextDim);
         _usbLabel = AddLabel(conn, IdleHint, 20, 82, 9.5f, false, TextDim);
 
-        // Pantalla virtual
-        var vdd = AddCard(236, 84, "PANTALLA VIRTUAL (MONITOR EXTENDIDO)");
-        _vddLabel = AddLabel(vdd, "Comprobando…", 20, 42, 10.5f, true, TextDim);
-        _installButton = AddButton(vdd, "Instalar y configurar", 470, 30, 214, 38, Field, 10f, true);
-        _installButton.Click += (_, _) => InstallVirtualDisplay();
-        _tip.SetToolTip(_installButton,
-            "Instala el driver de pantalla virtual (una sola vez, pide permiso de administrador) y registra los tamaños de iPad.");
-
         // Ajustes
-        var settings = AddCard(332, 160, "AJUSTES");
+        var settings = AddCard(236, 160, "AJUSTES");
 
         AddLabel(settings, "Modo", 20, 34, 9.5f, false, TextDim);
         _modeCombo = AddCombo(settings, 20, 56, 330);
@@ -272,7 +264,7 @@ internal sealed class MainForm : Form
         settings.Controls.Add(_autoStartCheck);
 
         // Botón principal
-        _startButton = AddButton(this, "Iniciar transmisión", 28, 504, 704, 50, Accent, 13f, true);
+        _startButton = AddButton(this, "Iniciar transmisión", 28, 408, 704, 50, Accent, 13f, true);
         _startButton.Click += (_, _) => ToggleServer();
 
         // Registro
@@ -285,7 +277,7 @@ internal sealed class MainForm : Form
             BackColor = HeaderBg,
             ForeColor = TextDim,
             Font = new Font("Consolas", 9f),
-            Bounds = new Rectangle(28, 564, 704, 66)
+            Bounds = new Rectangle(28, 468, 704, 66)
         };
         Controls.Add(_logBox);
     }
@@ -335,7 +327,6 @@ internal sealed class MainForm : Form
         _autoStartCheck.Checked = _settings.AutoStart;
         _modeCombo.SelectedIndex = _settings.Mirror ? 1 : 0;
         _detailCombo.SelectedIndex = _settings.Sharp ? 1 : 0;
-        RefreshVirtualStatus();
     }
 
     private void ReadUiToSettings()
@@ -351,22 +342,19 @@ internal sealed class MainForm : Form
 
     // ---------------------------------------------------------------- Pantalla virtual
 
-    private void RefreshVirtualStatus()
+    /// <summary>
+    /// El instalador ya deja el driver puesto. Solo si por algún motivo falta (por ejemplo, falló
+    /// la instalación), se instala aquí solo, sin que el usuario pulse nada.
+    /// </summary>
+    private void InstallVirtualDisplayThenStart()
     {
-        bool installed = VirtualDisplay.FindDeviceName() != null;
-        _vddLabel.Text = installed ? "Instalada y lista" : "No instalada";
-        _vddLabel.ForeColor = installed ? Ok : Warn;
-        _installButton.Text = installed ? "Reconfigurar tamaños" : "Instalar y configurar";
-    }
-
-    private void InstallVirtualDisplay()
-    {
-        if (_installing || _server.Running) return;
+        if (_installing) return;
         _installing = true;
-        _installButton.Enabled = false;
-        _vddLabel.Text = "Instalando… acepta el permiso de administrador";
-        _vddLabel.ForeColor = Warn;
-        AppendLog("Instalando la pantalla virtual (puede tardar un minuto)…");
+        SetRunning(true);
+        SetStatus(Warn, "Instalando la pantalla virtual…");
+        _usbLabel.Text = "Acepta el permiso de administrador si Windows lo pide.";
+        _usbLabel.ForeColor = Warn;
+        AppendLog("Falta la pantalla virtual: se instalará automáticamente (puede tardar un minuto)…");
 
         Task.Run(VirtualDisplay.InstallAndConfigure).ContinueWith(task =>
         {
@@ -376,9 +364,18 @@ internal sealed class MainForm : Form
             Post(() =>
             {
                 _installing = false;
-                _installButton.Enabled = !_server.Running;
                 AppendLog(message);
-                RefreshVirtualStatus();
+                SetRunning(false);
+                if (ok && VirtualDisplay.FindDeviceName() != null)
+                {
+                    _server.Start(_settings.Mirror, _settings.Sharp, _settings.Quality, _settings.Fps);
+                    SetRunning(true);
+                }
+                else
+                {
+                    _usbLabel.Text = "No se pudo instalar la pantalla virtual. Usa el modo «Duplicar» o reinstala el programa.";
+                    _usbLabel.ForeColor = Warn;
+                }
             });
         });
     }
@@ -404,8 +401,7 @@ internal sealed class MainForm : Form
         _settings.Save();
         if (!_settings.Mirror && VirtualDisplay.FindDeviceName() == null)
         {
-            AppendLog("Falta la pantalla virtual: pulsa «Instalar y configurar» o elige el modo «Duplicar».");
-            if (!Visible) ShowWindow();
+            InstallVirtualDisplayThenStart();
             return;
         }
         _server.Start(_settings.Mirror, _settings.Sharp, _settings.Quality, _settings.Fps);
@@ -422,7 +418,6 @@ internal sealed class MainForm : Form
 
         foreach (Control control in new Control[] { _modeCombo, _detailCombo, _fpsNum, _qualityBar })
             control.Enabled = !running;
-        _installButton.Enabled = !running && !_installing;
 
         _statsLabel.Text = "";
         _modeLabel.Text = "";

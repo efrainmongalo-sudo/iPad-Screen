@@ -42,7 +42,6 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--minimizado"; Tasks: startup
 
 [Run]
-Filename: "{app}\{#AppExe}"; Parameters: "--instalar-driver"; StatusMsg: "Instalando la pantalla virtual (puede tardar un minuto)..."; Flags: waituntilterminated runhidden
 Filename: "{app}\{#AppExe}"; Description: "Abrir Monitor secundario"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [Code]
@@ -55,4 +54,22 @@ begin
            'El programa lo necesita para comunicarse con la iPad por el cable USB. ' +
            'Instala iTunes desde apple.com (no la versión de Microsoft Store) antes de usarlo.',
            mbInformation, MB_OK);
+end;
+
+// Después de copiar los archivos, instala la pantalla virtual (driver) para que todo quede listo antes de abrir el programa.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    WizardForm.StatusLabel.Caption := 'Instalando la pantalla virtual (puede tardar un minuto)...';
+    WizardForm.FileNameLabel.Caption := '';
+    if (not Exec(ExpandConstant('{app}\{#AppExe}'), '--instalar-driver', '', SW_HIDE, ewWaitUntilTerminated, ResultCode))
+       or (ResultCode <> 0) then
+      MsgBox('No se pudo instalar la pantalla virtual automáticamente.' + #13#10 + #13#10 +
+             'El programa volverá a intentarlo la primera vez que inicies la transmisión. ' +
+             'Si tampoco funciona, comprueba tu conexión a internet y vuelve a ejecutar este instalador.',
+             mbInformation, MB_OK);
+  end;
 end;

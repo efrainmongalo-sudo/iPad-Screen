@@ -170,7 +170,7 @@ internal static class VirtualDisplay
         var device = FindDevice(out bool attached);
         if (device == null)
         {
-            message = "Falta la pantalla virtual: pulsa «Instalar y configurar» en la ventana.";
+            message = "Falta la pantalla virtual: reinstala el programa.";
             return null;
         }
 
@@ -211,7 +211,7 @@ internal static class VirtualDisplay
         var modes = GetModes(device);
         if (modes.Count == 0)
         {
-            message = "La pantalla virtual no tiene modos de video. Pulsa «Reconfigurar»; si sigue igual, reinicia Windows.";
+            message = "La pantalla virtual no tiene modos de video. Reinicia Windows o reinstala el programa.";
             return false;
         }
 

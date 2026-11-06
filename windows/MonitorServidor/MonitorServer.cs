@@ -235,7 +235,7 @@ internal sealed class MonitorServer : IDisposable
         {
             if (!mirror && VirtualDisplay.FindDeviceName() == null)
             {
-                Report(false, "Falta la pantalla virtual: pulsa «Instalar y configurar».");
+                Report(false, "Falta la pantalla virtual: reinstala el programa.");
                 if (WaitCancelled(token, 2000)) break;
                 continue;
             }
