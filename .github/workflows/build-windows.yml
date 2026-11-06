@@ -1,0 +1,29 @@
+name: Compilar servidor (Windows)
+
+on:
+  push:
+    branches: [main]
+    paths: ["windows/**", ".github/workflows/build-windows.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publicar como .exe único
+        run: >
+          dotnet publish windows/MonitorServidor/MonitorServidor.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -o out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MonitorServidor-exe
+          path: out/MonitorServidor.exe
