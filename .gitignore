@@ -6,4 +6,5 @@ ios/Payload/
 windows/**/bin/
 windows/**/obj/
 out/
+installer-out/
 .vs/
