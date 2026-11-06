@@ -50,10 +50,15 @@ Windows puede mostrar un aviso de SmartScreen porque el programa no está firmad
 
 ## 5. Usarlo
 
-1. Conecta la iPad a la PC con el cable y abre la app **Monitor PC** (déjala en primer plano).
-2. En la PC abre **Monitor secundario** y pulsa *Iniciar transmisión*.
-3. La ventana indica en cada paso qué falta: iTunes, cable, app abierta. Al conectar, la iPad muestra la pantalla.
-4. Al cerrar la ventana con la X, el programa sigue funcionando junto al reloj. Para salir del todo: clic derecho en su icono > *Salir*.
+1. **Una sola vez:** en la ventana de Windows, en la tarjeta *Pantalla virtual*, pulsa *Instalar y configurar*. Acepta el permiso de administrador. Instala con winget el driver «Virtual Display Driver» (firmado) y registra los tamaños de iPad en horizontal y vertical. Si el monitor no aparece en Windows, reinicia la laptop una vez.
+2. Conecta la iPad con el cable y abre la app **Monitor PC** (déjala en primer plano).
+3. En la PC abre **Monitor secundario**, deja el modo *Monitor extendido* y pulsa *Iniciar transmisión*.
+4. Windows muestra un monitor adicional con la resolución de la iPad (en Configuración > Sistema > Pantalla). Arrastra ventanas hacia él.
+5. Al girar la iPad, la app avisa su nuevo tamaño y Windows cambia la resolución del monitor virtual (horizontal ↔ vertical) sola.
+6. Modo *Duplicar la pantalla principal*: no usa el driver; solo copia la pantalla de la laptop.
+7. Al cerrar la ventana con la X, el programa sigue junto al reloj. Para salir del todo: clic derecho en su icono > *Salir*.
+
+Detalle de imagen: *Rápido* usa el tamaño en puntos de la iPad (1024×768 en iPad Air, menos retraso); *Nítido* usa los píxeles reales (2048×1536, más datos y más retraso).
 
 ## Cómo se mantiene el retraso bajo
 
@@ -66,11 +71,12 @@ Windows puede mostrar un aviso de SmartScreen porque el programa no está firmad
 
 - La iPad escucha en el puerto 5800. La PC abre el túnel por usbmuxd (`127.0.0.1:27015`).
 - PC a iPad: `[4 bytes de longitud, big-endian][imagen JPEG]`, repetido.
-- iPad a PC: líneas de texto `D x y`, `M x y` y `U x y` (pulsar, mover, soltar, con x e y entre 0 y 1) y `A` por cada cuadro recibido.
+- iPad a PC: líneas de texto `D x y`, `M x y` y `U x y` (pulsar, mover, soltar, con x e y entre 0 y 1), `A` por cada cuadro recibido y `R pxAncho pxAlto ptAncho ptAlto` con el tamaño de la pantalla (al conectar y al girar).
 
 ## Limitaciones de esta versión
 
 - La captura usa GDI (`CopyFromScreen`): sirve para validar, pero es la parte más lenta y no muestra el cursor. El siguiente paso para bajar el retraso es cambiarla por Desktop Duplication (DXGI).
-- Para que la iPad sea un monitor extendido (y no solo una copia) hace falta un driver de pantalla virtual; al instalarlo aparece en la lista *Pantalla que se comparte*.
+- El monitor virtual usa un driver de terceros (VirtualDrivers/Virtual-Display-Driver). Los tamaños se leen de `C:\VirtualDisplayDriver\vdd_settings.xml`; si el driver no los toma, reinicia Windows. Si la iPad pide un tamaño que no existe en la lista, se usa el más parecido.
+- Al detener la transmisión el monitor virtual sigue existiendo en Windows (se puede desactivar en Configuración > Pantalla).
 - El ratón no puede controlar ventanas abiertas «como administrador» si el programa corre sin esos permisos.
 - La app de la iPad no lleva icono.

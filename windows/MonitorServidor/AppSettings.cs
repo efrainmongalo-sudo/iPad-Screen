@@ -5,8 +5,12 @@ namespace MonitorServidor;
 /// <summary>Ajustes que se guardan en %AppData%\MonitorServidor\settings.json.</summary>
 internal sealed class AppSettings
 {
-    public string ScreenName { get; set; } = "";
-    public int MaxWidth { get; set; } = 1280;
+    /// <summary>true = duplicar la pantalla principal; false = monitor extendido con pantalla virtual.</summary>
+    public bool Mirror { get; set; } = false;
+
+    /// <summary>true = usar la resolución real de la iPad; false = su tamaño en puntos (más rápido).</summary>
+    public bool Sharp { get; set; } = false;
+
     public int Quality { get; set; } = 70;
     public int Fps { get; set; } = 30;
     public bool AutoStart { get; set; } = false;

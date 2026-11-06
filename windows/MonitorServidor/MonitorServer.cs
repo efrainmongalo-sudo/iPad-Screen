@@ -9,7 +9,8 @@ namespace MonitorServidor;
 /// <summary>
 /// Motor del monitor secundario (sin interfaz). Busca la iPad por USB, abre un túnel hacia la app,
 /// captura una pantalla de Windows, la comprime a JPEG y la envía. Recibe los toques y los convierte
-/// en clics del ratón. Los eventos se disparan en hilos de fondo: la interfaz debe pasarlos a su hilo.
+/// en clics del ratón. La iPad informa su tamaño al conectarse y al girar; en modo extendido la pantalla
+/// virtual cambia de resolución para coincidir. Los eventos se disparan en hilos de fondo.
 /// </summary>
 internal sealed class MonitorServer : IDisposable
 {
@@ -31,11 +32,87 @@ internal sealed class MonitorServer : IDisposable
     public event Action<bool, string>? UsbStatus;       // todo bien, texto para mostrar
     public event Action<bool, string>? ClientChanged;   // conectada, descripción
     public event Action<double, double>? Stats;         // cuadros por segundo, KB por segundo
+    public event Action<string>? ModeChanged;           // resolución actual de lo que se envía
 
     private sealed class Flow
     {
         public int InFlight;
         public readonly ManualResetEventSlim AckEvent = new(false);
+    }
+
+    /// <summary>Estado compartido entre el hilo de transmisión y el que lee a la iPad.</summary>
+    private sealed class Session
+    {
+        public Session(bool sharp) { Sharp = sharp; }
+
+        public bool Sharp { get; }
+        public readonly ManualResetEventSlim GotSize = new(false);
+
+        private int _version;
+        private int _targetW = 1024, _targetH = 768;
+        private Rectangle _bounds;
+
+        /// <summary>Aumenta cada vez que la iPad informa un tamaño nuevo.</summary>
+        public int Version => Volatile.Read(ref _version);
+
+        public (int W, int H) Target
+        {
+            get { lock (this) return (_targetW, _targetH); }
+        }
+
+        /// <summary>Zona del escritorio que se está compartiendo (para convertir los toques).</summary>
+        public Rectangle Bounds
+        {
+            get { lock (this) return _bounds; }
+            set { lock (this) _bounds = value; }
+        }
+
+        public void SetTarget(int w, int h)
+        {
+            lock (this)
+            {
+                _targetW = w;
+                _targetH = h;
+            }
+            Interlocked.Increment(ref _version);
+            GotSize.Set();
+        }
+    }
+
+    /// <summary>Imágenes de trabajo; se recrean cuando cambia la resolución.</summary>
+    private sealed class Surface : IDisposable
+    {
+        public Surface(Rectangle bounds, int maxW, int maxH)
+        {
+            Bounds = bounds;
+            double scale = Math.Min(1.0, Math.Min((double)maxW / bounds.Width, (double)maxH / bounds.Height));
+            OutW = Math.Max(2, (int)(bounds.Width * scale) & ~1);
+            OutH = Math.Max(2, (int)(bounds.Height * scale) & ~1);
+
+            Full = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
+            GFull = Graphics.FromImage(Full);
+            Small = new Bitmap(OutW, OutH, PixelFormat.Format24bppRgb);
+            GSmall = Graphics.FromImage(Small);
+            GSmall.InterpolationMode = InterpolationMode.Bilinear;
+            GSmall.CompositingQuality = CompositingQuality.HighSpeed;
+        }
+
+        public Rectangle Bounds { get; }
+        public int OutW { get; }
+        public int OutH { get; }
+        public Bitmap Full { get; }
+        public Bitmap Small { get; }
+        public Graphics GFull { get; }
+        public Graphics GSmall { get; }
+        public bool Scaled => OutW != Bounds.Width || OutH != Bounds.Height;
+
+        public void Dispose()
+        {
+            GFull.Dispose();
+            GSmall.Dispose();
+            Full.Dispose();
+            Small.Dispose();
+        }
     }
 
     private readonly object _gate = new();
@@ -47,14 +124,16 @@ internal sealed class MonitorServer : IDisposable
         get { lock (_gate) return _cts != null; }
     }
 
-    public void Start(string screenDeviceName, int maxWidth, int quality, int fps)
+    /// <param name="mirror">true = duplica la pantalla principal; false = monitor extendido (pantalla virtual).</param>
+    /// <param name="sharp">true = resolución real de la iPad; false = su tamaño en puntos (menos retraso).</param>
+    public void Start(bool mirror, bool sharp, int quality, int fps)
     {
         lock (_gate)
         {
             if (_cts != null) return;
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
-            new Thread(() => UsbLoop(screenDeviceName, maxWidth, quality, fps, token))
+            new Thread(() => UsbLoop(mirror, sharp, quality, fps, token))
             {
                 IsBackground = true,
                 Name = "monitor-usb"
@@ -86,7 +165,7 @@ internal sealed class MonitorServer : IDisposable
         token.WaitHandle.WaitOne(milliseconds);
 
     /// <summary>Busca la iPad, abre el túnel y transmite; si algo se corta, vuelve a buscar.</summary>
-    private void UsbLoop(string screenName, int maxWidth, int quality, int fps, CancellationToken token)
+    private void UsbLoop(bool mirror, bool sharp, int quality, int fps, CancellationToken token)
     {
         string? lastStatus = null;
 
@@ -99,6 +178,13 @@ internal sealed class MonitorServer : IDisposable
 
         while (!token.IsCancellationRequested)
         {
+            if (!mirror && VirtualDisplay.FindDeviceName() == null)
+            {
+                Report(false, "Falta la pantalla virtual: pulsa «Instalar y configurar».");
+                if (WaitCancelled(token, 2000)) break;
+                continue;
+            }
+
             UsbMuxDevice? device;
             try
             {
@@ -156,9 +242,17 @@ internal sealed class MonitorServer : IDisposable
             Log?.Invoke("iPad conectada por USB.");
             ClientChanged?.Invoke(true, "USB");
 
+            int pause = 500;
             try
             {
-                Serve(client, screenName, maxWidth, quality, fps, token);
+                Serve(client, mirror, sharp, quality, fps, token);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Problema de configuración (por ejemplo, la pantalla virtual no está lista).
+                Log?.Invoke(ex.Message);
+                Report(false, ex.Message);
+                pause = 3000;
             }
             catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException or OperationCanceledException)
             {
@@ -182,39 +276,71 @@ internal sealed class MonitorServer : IDisposable
                 Log?.Invoke("iPad desconectada.");
                 ClientChanged?.Invoke(false, "USB");
                 lastStatus = null;
-                if (WaitCancelled(token, 500)) break;
+                if (WaitCancelled(token, pause)) break;
             }
         }
     }
 
-    private void Serve(TcpClient client, string screenName, int maxWidth, int quality, int fps, CancellationToken token)
+    /// <summary>Deja lista la zona a compartir según el tamaño que pide la iPad.</summary>
+    private Surface BuildSurface(Session session, bool mirror, string? virtualDevice)
     {
-        var screen = Screen.AllScreens.FirstOrDefault(s => s.DeviceName == screenName)
-                     ?? Screen.PrimaryScreen
-                     ?? Screen.AllScreens[0];
-        var bounds = screen.Bounds;
-        Log?.Invoke($"Compartiendo {bounds.Width}×{bounds.Height} px.");
+        var (targetW, targetH) = session.Target;
+        Rectangle bounds;
+
+        if (mirror || virtualDevice == null)
+        {
+            var screen = Screen.PrimaryScreen ?? Screen.AllScreens[0];
+            bounds = screen.Bounds;
+        }
+        else
+        {
+            if (!VirtualDisplay.SetMode(virtualDevice, targetW, targetH, out string message))
+                throw new InvalidOperationException(message);
+            Log?.Invoke(message);
+
+            var current = VirtualDisplay.GetCurrentBounds(virtualDevice);
+            if (current == null)
+                throw new InvalidOperationException("La pantalla virtual no está conectada al escritorio de Windows.");
+            bounds = current.Value;
+        }
+
+        session.Bounds = bounds;
+        var surface = new Surface(bounds, targetW, targetH);
+        string text = $"{surface.OutW}×{surface.OutH}" + (mirror ? " (copia)" : " (monitor extendido)");
+        ModeChanged?.Invoke(text);
+        Log?.Invoke($"Enviando {surface.OutW}×{surface.OutH} desde {bounds.Width}×{bounds.Height} px.");
+        return surface;
+    }
+
+    private void Serve(TcpClient client, bool mirror, bool sharp, int quality, int fps, CancellationToken token)
+    {
+        string? virtualDevice = null;
+        if (!mirror)
+        {
+            virtualDevice = VirtualDisplay.EnsureReady(out string message);
+            if (virtualDevice == null) throw new InvalidOperationException(message);
+        }
 
         var stream = client.GetStream();
         var flow = new Flow();
+        var session = new Session(sharp);
 
         var codec = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
         using var encoderParams = new EncoderParameters(1);
         encoderParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)quality);
 
-        // Hilo que lee lo que manda la iPad: toques y confirmaciones de cuadros.
-        new Thread(() => ReadFromDevice(stream, bounds, flow)) { IsBackground = true, Name = "monitor-input" }.Start();
+        // Hilo que lee lo que manda la iPad: tamaño, toques y confirmaciones de cuadros.
+        new Thread(() => ReadFromDevice(stream, session, flow)) { IsBackground = true, Name = "monitor-input" }.Start();
 
-        double scale = bounds.Width > maxWidth ? (double)maxWidth / bounds.Width : 1.0;
-        int outW = Math.Max(2, (int)(bounds.Width * scale) & ~1);
-        int outH = Math.Max(2, (int)(bounds.Height * scale) & ~1);
+        // La app informa su tamaño nada más conectar; si es una versión antigua, se usa 1024×768.
+        if (!session.GotSize.Wait(2500, token))
+        {
+            Log?.Invoke("La iPad no informó su tamaño; se usa 1024×768.");
+            session.SetTarget(1024, 768);
+        }
 
-        using var full = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
-        using var small = new Bitmap(outW, outH, PixelFormat.Format24bppRgb);
-        using var gFull = Graphics.FromImage(full);
-        using var gSmall = Graphics.FromImage(small);
-        gSmall.InterpolationMode = InterpolationMode.Bilinear;
-        gSmall.CompositingQuality = CompositingQuality.HighSpeed;
+        int appliedVersion = session.Version;
+        var surface = BuildSurface(session, mirror, virtualDevice);
 
         var jpeg = new MemoryStream(512 * 1024);
         var header = new byte[4];
@@ -232,6 +358,16 @@ internal sealed class MonitorServer : IDisposable
             {
                 var start = clock.Elapsed;
 
+                // La iPad giró o cambió de tamaño: se ajusta la pantalla y las imágenes de trabajo.
+                if (session.Version != appliedVersion)
+                {
+                    appliedVersion = session.Version;
+                    var next = BuildSurface(session, mirror, virtualDevice);
+                    surface.Dispose();
+                    surface = next;
+                    Interlocked.Exchange(ref flow.InFlight, 0);
+                }
+
                 // Control de flujo: si ya hay MaxInFlight cuadros sin confirmar, se espera a la iPad
                 // en lugar de acumular cuadros viejos (eso sería retraso).
                 while (Volatile.Read(ref flow.InFlight) >= MaxInFlight)
@@ -247,7 +383,7 @@ internal sealed class MonitorServer : IDisposable
 
                 try
                 {
-                    gFull.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+                    surface.GFull.CopyFromScreen(surface.Bounds.Location, Point.Empty, surface.Bounds.Size);
                 }
                 catch (System.ComponentModel.Win32Exception)
                 {
@@ -256,11 +392,11 @@ internal sealed class MonitorServer : IDisposable
                     continue;
                 }
 
-                Bitmap toSend = full;
-                if (outW != bounds.Width)
+                Bitmap toSend = surface.Full;
+                if (surface.Scaled)
                 {
-                    gSmall.DrawImage(full, 0, 0, outW, outH);
-                    toSend = small;
+                    surface.GSmall.DrawImage(surface.Full, 0, 0, surface.OutW, surface.OutH);
+                    toSend = surface.Small;
                 }
 
                 jpeg.SetLength(0);
@@ -294,12 +430,13 @@ internal sealed class MonitorServer : IDisposable
         }
         finally
         {
+            surface.Dispose();
             Thread.CurrentThread.Priority = ThreadPriority.Normal;
             timeEndPeriod(1);
         }
     }
 
-    private static void ReadFromDevice(NetworkStream stream, Rectangle bounds, Flow flow)
+    private static void ReadFromDevice(NetworkStream stream, Session session, Flow flow)
     {
         try
         {
@@ -315,10 +452,26 @@ internal sealed class MonitorServer : IDisposable
                 }
 
                 var parts = line.Split(' ');
+
+                // "R anchoPx altoPx anchoPuntos altoPuntos": tamaño de la pantalla de la iPad.
+                if (parts[0] == "R" && parts.Length == 5)
+                {
+                    if (int.TryParse(parts[1], out int pxW) && int.TryParse(parts[2], out int pxH) &&
+                        int.TryParse(parts[3], out int ptW) && int.TryParse(parts[4], out int ptH))
+                    {
+                        int w = session.Sharp ? pxW : ptW;
+                        int h = session.Sharp ? pxH : ptH;
+                        if (w >= 320 && h >= 320 && w <= 8192 && h <= 8192) session.SetTarget(w, h);
+                    }
+                    continue;
+                }
+
                 if (parts.Length != 3) continue;
                 if (!double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var nx)) continue;
                 if (!double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var ny)) continue;
 
+                var bounds = session.Bounds;
+                if (bounds.Width <= 0 || bounds.Height <= 0) continue;
                 int x = bounds.X + (int)Math.Round(Math.Clamp(nx, 0, 1) * (bounds.Width - 1));
                 int y = bounds.Y + (int)Math.Round(Math.Clamp(ny, 0, 1) * (bounds.Height - 1));
 

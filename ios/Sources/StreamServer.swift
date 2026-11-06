@@ -45,6 +45,16 @@ final class StreamServer {
         send(line)
     }
 
+    /// Informa a la PC del tamaño de la pantalla (píxeles y puntos) para que ajuste el monitor virtual.
+    /// Formato: "R anchoPx altoPx anchoPuntos altoPuntos".
+    func sendScreenSize(points: CGSize, scale: CGFloat) {
+        let pointsW = Int(points.width.rounded())
+        let pointsH = Int(points.height.rounded())
+        let pixelsW = Int((points.width * scale).rounded())
+        let pixelsH = Int((points.height * scale).rounded())
+        send("R \(pixelsW) \(pixelsH) \(pointsW) \(pointsH)\n")
+    }
+
     // MARK: - Interno (siempre en `queue`)
 
     private func send(_ text: String) {

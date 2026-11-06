@@ -9,22 +9,6 @@ internal sealed class MainForm : Form
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
-    private sealed class ScreenItem
-    {
-        public ScreenItem(string deviceName, string label) { DeviceName = deviceName; Label = label; }
-        public string DeviceName { get; }
-        public string Label { get; }
-        public override string ToString() => Label;
-    }
-
-    private sealed class ResItem
-    {
-        public ResItem(int width, string label) { Width = width; Label = label; }
-        public int Width { get; }
-        public string Label { get; }
-        public override string ToString() => Label;
-    }
-
     private const string IdleHint = "Pulsa «Iniciar transmisión» y conecta la iPad con el cable USB.";
 
     // Paleta
@@ -51,12 +35,14 @@ internal sealed class MainForm : Form
     private ToolStripMenuItem _trayToggle = null!;
 
     private Label _dot = null!, _statusLabel = null!, _statsLabel = null!, _usbLabel = null!, _qualityLabel = null!;
-    private ComboBox _screenCombo = null!, _resCombo = null!;
+    private Label _modeLabel = null!, _vddLabel = null!;
+    private ComboBox _modeCombo = null!, _detailCombo = null!;
     private NumericUpDown _fpsNum = null!;
     private TrackBar _qualityBar = null!;
     private CheckBox _autoStartCheck = null!;
-    private Button _startButton = null!, _refreshScreens = null!;
+    private Button _startButton = null!, _installButton = null!;
     private TextBox _logBox = null!;
+    private bool _installing;
 
     private bool _allowShow = true;
     private bool _exiting;
@@ -73,6 +59,7 @@ internal sealed class MainForm : Form
         _server.UsbStatus += (ok, text) => Post(() => ShowUsbStatus(ok, text));
         _server.ClientChanged += (connected, _) => Post(() => OnClientChanged(connected));
         _server.Stats += (fps, kbps) => Post(() => _statsLabel.Text = $"{fps:0} fps · {kbps:0} KB/s");
+        _server.ModeChanged += text => Post(() => _modeLabel.Text = "Enviando " + text);
 
         _pump.Tick += (_, _) =>
         {
@@ -216,7 +203,7 @@ internal sealed class MainForm : Form
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(760, 646);
+        ClientSize = new Size(760, 640);
 
         try { _appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         if (_appIcon != null) Icon = _appIcon;
@@ -225,44 +212,45 @@ internal sealed class MainForm : Form
         var header = new Panel { Bounds = new Rectangle(0, 0, 760, 92), BackColor = HeaderBg };
         Controls.Add(header);
         AddLabel(header, "Monitor secundario", 28, 14, 20f, true, TextMain);
-        AddLabel(header, "Usa tu iPad como segunda pantalla de Windows, por cable USB", 30, 56, 10f, false, TextDim);
+        AddLabel(header, "Usa tu iPad como pantalla adicional de Windows, por cable USB", 30, 56, 10f, false, TextDim);
 
         // Conexión
-        var conn = AddCard(108, 120, "CONEXIÓN POR USB");
+        var conn = AddCard(108, 116, "CONEXIÓN POR USB");
         _dot = AddLabel(conn, "●", 18, 36, 16f, false, Off);
         _statusLabel = AddLabel(conn, "Detenido", 46, 38, 13f, true, TextMain);
-        _statsLabel = AddLabel(conn, "", 470, 44, 10f, false, TextDim);
+        _statsLabel = AddLabel(conn, "", 470, 34, 10f, false, TextDim);
+        _modeLabel = AddLabel(conn, "", 470, 58, 9.5f, false, TextDim);
         _usbLabel = AddLabel(conn, IdleHint, 20, 82, 9.5f, false, TextDim);
 
+        // Pantalla virtual
+        var vdd = AddCard(236, 84, "PANTALLA VIRTUAL (MONITOR EXTENDIDO)");
+        _vddLabel = AddLabel(vdd, "Comprobando…", 20, 42, 10.5f, true, TextDim);
+        _installButton = AddButton(vdd, "Instalar y configurar", 470, 30, 214, 38, Field, 10f, true);
+        _installButton.Click += (_, _) => InstallVirtualDisplay();
+        _tip.SetToolTip(_installButton,
+            "Instala el driver de pantalla virtual (una sola vez, pide permiso de administrador) y registra los tamaños de iPad.");
+
         // Ajustes
-        var settings = AddCard(240, 232, "AJUSTES");
+        var settings = AddCard(332, 160, "AJUSTES");
 
-        AddLabel(settings, "Pantalla que se comparte", 20, 38, 9.5f, false, TextDim);
-        _screenCombo = AddCombo(settings, 20, 62, 330);
-        _refreshScreens = AddButton(settings, "↻", 358, 60, 36, 30, Field, 11f, true);
-        _tip.SetToolTip(_refreshScreens, "Actualizar la lista de pantallas (útil después de instalar un driver de pantalla virtual)");
-        _refreshScreens.Click += (_, _) =>
-        {
-            RefreshScreens(null);
-            AppendLog($"Pantallas detectadas: {_screenCombo.Items.Count}.");
-        };
+        AddLabel(settings, "Modo", 20, 34, 9.5f, false, TextDim);
+        _modeCombo = AddCombo(settings, 20, 56, 330);
+        _modeCombo.Items.Add("Monitor extendido (pantalla adicional)");
+        _modeCombo.Items.Add("Duplicar la pantalla principal");
 
-        AddLabel(settings, "Cuadros por segundo", 430, 38, 9.5f, false, TextDim);
-        _fpsNum = AddNumeric(settings, 430, 62, 140, 10, 60, 5);
+        AddLabel(settings, "Detalle de imagen", 370, 34, 9.5f, false, TextDim);
+        _detailCombo = AddCombo(settings, 370, 56, 314);
+        _detailCombo.Items.Add("Rápido · tamaño en puntos (recomendado)");
+        _detailCombo.Items.Add("Nítido · píxeles reales de la iPad");
 
-        AddLabel(settings, "Resolución máxima enviada", 20, 102, 9.5f, false, TextDim);
-        _resCombo = AddCombo(settings, 20, 126, 372);
-        _resCombo.Items.Add(new ResItem(960, "960 px de ancho · menor retraso"));
-        _resCombo.Items.Add(new ResItem(1280, "1280 px de ancho · recomendado"));
-        _resCombo.Items.Add(new ResItem(1600, "1600 px de ancho"));
-        _resCombo.Items.Add(new ResItem(1920, "1920 px de ancho · más nítido"));
-        _resCombo.Items.Add(new ResItem(int.MaxValue, "Resolución original de la pantalla"));
+        AddLabel(settings, "Cuadros por segundo", 370, 94, 9.5f, false, TextDim);
+        _fpsNum = AddNumeric(settings, 370, 118, 100, 10, 60, 5);
 
-        _qualityLabel = AddLabel(settings, "Calidad de imagen", 20, 166, 9.5f, false, TextDim);
+        _qualityLabel = AddLabel(settings, "Calidad de imagen", 20, 94, 9.5f, false, TextDim);
         _qualityBar = new TrackBar
         {
-            Location = new Point(20, 184),
-            Width = 372,
+            Location = new Point(20, 112),
+            Width = 330,
             Minimum = 30,
             Maximum = 95,
             SmallChange = 5,
@@ -277,14 +265,14 @@ internal sealed class MainForm : Form
         {
             Text = "Iniciar al abrir el programa",
             AutoSize = true,
-            Location = new Point(430, 130),
+            Location = new Point(490, 122),
             ForeColor = TextMain,
             BackColor = Color.Transparent
         };
         settings.Controls.Add(_autoStartCheck);
 
         // Botón principal
-        _startButton = AddButton(this, "Iniciar transmisión", 28, 486, 704, 52, Accent, 13f, true);
+        _startButton = AddButton(this, "Iniciar transmisión", 28, 504, 704, 50, Accent, 13f, true);
         _startButton.Click += (_, _) => ToggleServer();
 
         // Registro
@@ -297,7 +285,7 @@ internal sealed class MainForm : Form
             BackColor = HeaderBg,
             ForeColor = TextDim,
             Font = new Font("Consolas", 9f),
-            Bounds = new Rectangle(28, 552, 704, 82)
+            Bounds = new Rectangle(28, 564, 704, 66)
         };
         Controls.Add(_logBox);
     }
@@ -345,21 +333,15 @@ internal sealed class MainForm : Form
         _qualityBar.Value = Math.Clamp(_settings.Quality, 30, 95);
         UpdateQualityLabel();
         _autoStartCheck.Checked = _settings.AutoStart;
-
-        int resIndex = 1;
-        for (int i = 0; i < _resCombo.Items.Count; i++)
-        {
-            if (_resCombo.Items[i] is ResItem item && item.Width == _settings.MaxWidth) resIndex = i;
-        }
-        _resCombo.SelectedIndex = resIndex;
-
-        RefreshScreens(_settings.ScreenName);
+        _modeCombo.SelectedIndex = _settings.Mirror ? 1 : 0;
+        _detailCombo.SelectedIndex = _settings.Sharp ? 1 : 0;
+        RefreshVirtualStatus();
     }
 
     private void ReadUiToSettings()
     {
-        _settings.ScreenName = (_screenCombo.SelectedItem as ScreenItem)?.DeviceName ?? "";
-        _settings.MaxWidth = (_resCombo.SelectedItem as ResItem)?.Width ?? 1280;
+        _settings.Mirror = _modeCombo.SelectedIndex == 1;
+        _settings.Sharp = _detailCombo.SelectedIndex == 1;
         _settings.Quality = _qualityBar.Value;
         _settings.Fps = (int)_fpsNum.Value;
         _settings.AutoStart = _autoStartCheck.Checked;
@@ -367,22 +349,38 @@ internal sealed class MainForm : Form
 
     private void UpdateQualityLabel() => _qualityLabel.Text = $"Calidad de imagen: {_qualityBar.Value}%";
 
-    private void RefreshScreens(string? preferredDevice)
-    {
-        string? current = (_screenCombo.SelectedItem as ScreenItem)?.DeviceName ?? preferredDevice;
-        _screenCombo.Items.Clear();
+    // ---------------------------------------------------------------- Pantalla virtual
 
-        var screens = Screen.AllScreens;
-        int select = 0;
-        for (int i = 0; i < screens.Length; i++)
+    private void RefreshVirtualStatus()
+    {
+        bool installed = VirtualDisplay.FindDeviceName() != null;
+        _vddLabel.Text = installed ? "Instalada y lista" : "No instalada";
+        _vddLabel.ForeColor = installed ? Ok : Warn;
+        _installButton.Text = installed ? "Reconfigurar tamaños" : "Instalar y configurar";
+    }
+
+    private void InstallVirtualDisplay()
+    {
+        if (_installing || _server.Running) return;
+        _installing = true;
+        _installButton.Enabled = false;
+        _vddLabel.Text = "Instalando… acepta el permiso de administrador";
+        _vddLabel.ForeColor = Warn;
+        AppendLog("Instalando la pantalla virtual (puede tardar un minuto)…");
+
+        Task.Run(VirtualDisplay.InstallAndConfigure).ContinueWith(task =>
         {
-            var screen = screens[i];
-            string label = $"Pantalla {i + 1} · {screen.Bounds.Width}×{screen.Bounds.Height}" +
-                           (screen.Primary ? " (principal)" : "");
-            _screenCombo.Items.Add(new ScreenItem(screen.DeviceName, label));
-            if (screen.DeviceName == current) select = i;
-        }
-        _screenCombo.SelectedIndex = select;
+            var (ok, message) = task.IsFaulted
+                ? (false, "Error al instalar: " + task.Exception?.GetBaseException().Message)
+                : task.Result;
+            Post(() =>
+            {
+                _installing = false;
+                _installButton.Enabled = !_server.Running;
+                AppendLog(message);
+                RefreshVirtualStatus();
+            });
+        });
     }
 
     // ---------------------------------------------------------------- Servidor
@@ -404,7 +402,13 @@ internal sealed class MainForm : Form
     {
         ReadUiToSettings();
         _settings.Save();
-        _server.Start(_settings.ScreenName, _settings.MaxWidth, _settings.Quality, _settings.Fps);
+        if (!_settings.Mirror && VirtualDisplay.FindDeviceName() == null)
+        {
+            AppendLog("Falta la pantalla virtual: pulsa «Instalar y configurar» o elige el modo «Duplicar».");
+            if (!Visible) ShowWindow();
+            return;
+        }
+        _server.Start(_settings.Mirror, _settings.Sharp, _settings.Quality, _settings.Fps);
         SetRunning(true);
     }
 
@@ -416,10 +420,12 @@ internal sealed class MainForm : Form
         _startButton.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(_startButton.BackColor, 0.1f);
         _trayToggle.Text = running ? "Detener transmisión" : "Iniciar transmisión";
 
-        foreach (Control control in new Control[] { _screenCombo, _refreshScreens, _resCombo, _fpsNum, _qualityBar })
+        foreach (Control control in new Control[] { _modeCombo, _detailCombo, _fpsNum, _qualityBar })
             control.Enabled = !running;
+        _installButton.Enabled = !running && !_installing;
 
         _statsLabel.Text = "";
+        _modeLabel.Text = "";
         if (running)
         {
             SetStatus(Warn, "Buscando la iPad por USB…");
@@ -459,6 +465,7 @@ internal sealed class MainForm : Form
         else
         {
             _statsLabel.Text = "";
+            _modeLabel.Text = "";
             SetStatus(Warn, "Buscando la iPad por USB…");
         }
     }

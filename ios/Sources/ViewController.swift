@@ -69,6 +69,9 @@ final class ViewController: UIViewController, StreamServerDelegate {
     private var decoding = false
     private var pendingFrame: Data?
 
+    private var isConnected = false
+    private var lastSentSize = CGSize.zero
+
     override var prefersStatusBarHidden: Bool { return true }
     override var shouldAutorotate: Bool { return true }
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { return .all }
@@ -94,6 +97,20 @@ final class ViewController: UIViewController, StreamServerDelegate {
 
     @objc private func appDidBecomeActive() {
         server.restartIfNeeded()
+    }
+
+    /// Al girar la iPad cambia el tamaño de la vista: se avisa a la PC para que ajuste el monitor virtual.
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        sendSizeIfNeeded()
+    }
+
+    private func sendSizeIfNeeded() {
+        guard isConnected else { return }
+        let size = view.bounds.size
+        guard size.width > 0, size.height > 0, size != lastSentSize else { return }
+        lastSentSize = size
+        server.sendScreenSize(points: size, scale: UIScreen.main.nativeScale)
     }
 
     // MARK: - Interfaz
@@ -158,6 +175,11 @@ final class ViewController: UIViewController, StreamServerDelegate {
     func streamServer(_ server: StreamServer, didChangeState text: String, connected: Bool) {
         statusLabel.text = text
         overlay.isHidden = connected
+        isConnected = connected
+        if connected {
+            lastSentSize = .zero // al conectar siempre se informa el tamaño actual
+            sendSizeIfNeeded()
+        }
     }
 
     func streamServer(_ server: StreamServer, didReceiveFrame data: Data) {
