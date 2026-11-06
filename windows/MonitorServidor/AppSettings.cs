@@ -5,7 +5,6 @@ namespace MonitorServidor;
 /// <summary>Ajustes que se guardan en %AppData%\MonitorServidor\settings.json.</summary>
 internal sealed class AppSettings
 {
-    public int Port { get; set; } = 5800;
     public string ScreenName { get; set; } = "";
     public int MaxWidth { get; set; } = 1280;
     public int Quality { get; set; } = 70;

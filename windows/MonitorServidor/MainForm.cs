@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Net.NetworkInformation;
-using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
 namespace MonitorServidor;
@@ -27,6 +25,8 @@ internal sealed class MainForm : Form
         public override string ToString() => Label;
     }
 
+    private const string IdleHint = "Pulsa «Iniciar transmisión» y conecta la iPad con el cable USB.";
+
     // Paleta
     private static readonly Color Bg = Color.FromArgb(20, 24, 31);
     private static readonly Color HeaderBg = Color.FromArgb(14, 18, 24);
@@ -50,12 +50,12 @@ internal sealed class MainForm : Form
     private NotifyIcon _tray = null!;
     private ToolStripMenuItem _trayToggle = null!;
 
-    private Label _dot = null!, _statusLabel = null!, _statsLabel = null!, _portLabel = null!, _qualityLabel = null!;
-    private ComboBox _ipCombo = null!, _screenCombo = null!, _resCombo = null!;
-    private NumericUpDown _portNum = null!, _fpsNum = null!;
+    private Label _dot = null!, _statusLabel = null!, _statsLabel = null!, _usbLabel = null!, _qualityLabel = null!;
+    private ComboBox _screenCombo = null!, _resCombo = null!;
+    private NumericUpDown _fpsNum = null!;
     private TrackBar _qualityBar = null!;
     private CheckBox _autoStartCheck = null!;
-    private Button _startButton = null!, _copyButton = null!, _refreshScreens = null!;
+    private Button _startButton = null!, _refreshScreens = null!;
     private TextBox _logBox = null!;
 
     private bool _allowShow = true;
@@ -70,7 +70,8 @@ internal sealed class MainForm : Form
         LoadSettingsIntoUi();
 
         _server.Log += message => Post(() => AppendLog(message));
-        _server.ClientChanged += (connected, endpoint) => Post(() => OnClientChanged(connected, endpoint));
+        _server.UsbStatus += (ok, text) => Post(() => ShowUsbStatus(ok, text));
+        _server.ClientChanged += (connected, _) => Post(() => OnClientChanged(connected));
         _server.Stats += (fps, kbps) => Post(() => _statsLabel.Text = $"{fps:0} fps · {kbps:0} KB/s");
 
         _pump.Tick += (_, _) =>
@@ -79,7 +80,7 @@ internal sealed class MainForm : Form
         };
         _pump.Start();
 
-        AppendLog("Listo. Pulsa «Iniciar transmisión» y escribe la IP en la app de la iPad.");
+        AppendLog("Listo. Pulsa «Iniciar transmisión» y conecta la iPad con el cable USB.");
         if (startHidden || _settings.AutoStart) StartServer();
     }
 
@@ -224,24 +225,17 @@ internal sealed class MainForm : Form
         var header = new Panel { Bounds = new Rectangle(0, 0, 760, 92), BackColor = HeaderBg };
         Controls.Add(header);
         AddLabel(header, "Monitor secundario", 28, 14, 20f, true, TextMain);
-        AddLabel(header, "Usa tu iPad como segunda pantalla de Windows", 30, 56, 10f, false, TextDim);
+        AddLabel(header, "Usa tu iPad como segunda pantalla de Windows, por cable USB", 30, 56, 10f, false, TextDim);
 
         // Conexión
-        var conn = AddCard(108, 150, "CONEXIÓN");
+        var conn = AddCard(108, 120, "CONEXIÓN POR USB");
         _dot = AddLabel(conn, "●", 18, 36, 16f, false, Off);
         _statusLabel = AddLabel(conn, "Detenido", 46, 38, 13f, true, TextMain);
         _statsLabel = AddLabel(conn, "", 470, 44, 10f, false, TextDim);
-        AddLabel(conn, "En la app de la iPad escribe esta dirección:", 20, 80, 9.5f, false, TextDim);
-
-        _ipCombo = AddCombo(conn, 20, 104, 250);
-        _ipCombo.Font = new Font("Consolas", 14f, FontStyle.Bold);
-        _portLabel = AddLabel(conn, ":5800", 282, 104, 16f, true, Accent);
-        _portLabel.Font = new Font("Consolas", 16f, FontStyle.Bold);
-        _copyButton = AddButton(conn, "Copiar IP", 560, 102, 124, 36, Field, 10f, false);
-        _copyButton.Click += (_, _) => CopyIp();
+        _usbLabel = AddLabel(conn, IdleHint, 20, 82, 9.5f, false, TextDim);
 
         // Ajustes
-        var settings = AddCard(270, 232, "AJUSTES");
+        var settings = AddCard(240, 232, "AJUSTES");
 
         AddLabel(settings, "Pantalla que se comparte", 20, 38, 9.5f, false, TextDim);
         _screenCombo = AddCombo(settings, 20, 62, 330);
@@ -253,20 +247,16 @@ internal sealed class MainForm : Form
             AppendLog($"Pantallas detectadas: {_screenCombo.Items.Count}.");
         };
 
-        AddLabel(settings, "Puerto", 430, 38, 9.5f, false, TextDim);
-        _portNum = AddNumeric(settings, 430, 62, 140, 1024, 65535, 1);
-        _portNum.ValueChanged += (_, _) => _portLabel.Text = ":" + (int)_portNum.Value;
+        AddLabel(settings, "Cuadros por segundo", 430, 38, 9.5f, false, TextDim);
+        _fpsNum = AddNumeric(settings, 430, 62, 140, 10, 60, 5);
 
         AddLabel(settings, "Resolución máxima enviada", 20, 102, 9.5f, false, TextDim);
         _resCombo = AddCombo(settings, 20, 126, 372);
-        _resCombo.Items.Add(new ResItem(960, "960 px de ancho · más rápido"));
+        _resCombo.Items.Add(new ResItem(960, "960 px de ancho · menor retraso"));
         _resCombo.Items.Add(new ResItem(1280, "1280 px de ancho · recomendado"));
         _resCombo.Items.Add(new ResItem(1600, "1600 px de ancho"));
         _resCombo.Items.Add(new ResItem(1920, "1920 px de ancho · más nítido"));
         _resCombo.Items.Add(new ResItem(int.MaxValue, "Resolución original de la pantalla"));
-
-        AddLabel(settings, "Cuadros por segundo", 430, 102, 9.5f, false, TextDim);
-        _fpsNum = AddNumeric(settings, 430, 126, 140, 10, 60, 5);
 
         _qualityLabel = AddLabel(settings, "Calidad de imagen", 20, 166, 9.5f, false, TextDim);
         _qualityBar = new TrackBar
@@ -287,14 +277,14 @@ internal sealed class MainForm : Form
         {
             Text = "Iniciar al abrir el programa",
             AutoSize = true,
-            Location = new Point(430, 190),
+            Location = new Point(430, 130),
             ForeColor = TextMain,
             BackColor = Color.Transparent
         };
         settings.Controls.Add(_autoStartCheck);
 
         // Botón principal
-        _startButton = AddButton(this, "Iniciar transmisión", 28, 516, 704, 52, Accent, 13f, true);
+        _startButton = AddButton(this, "Iniciar transmisión", 28, 486, 704, 52, Accent, 13f, true);
         _startButton.Click += (_, _) => ToggleServer();
 
         // Registro
@@ -307,7 +297,7 @@ internal sealed class MainForm : Form
             BackColor = HeaderBg,
             ForeColor = TextDim,
             Font = new Font("Consolas", 9f),
-            Bounds = new Rectangle(28, 580, 704, 54)
+            Bounds = new Rectangle(28, 552, 704, 82)
         };
         Controls.Add(_logBox);
     }
@@ -334,7 +324,6 @@ internal sealed class MainForm : Form
     private void ShowWindow()
     {
         _allowShow = true;
-        RefreshIps();
         Show();
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         Activate();
@@ -352,8 +341,6 @@ internal sealed class MainForm : Form
 
     private void LoadSettingsIntoUi()
     {
-        _portNum.Value = Math.Clamp(_settings.Port, 1024, 65535);
-        _portLabel.Text = ":" + (int)_portNum.Value;
         _fpsNum.Value = Math.Clamp(_settings.Fps, 10, 60);
         _qualityBar.Value = Math.Clamp(_settings.Quality, 30, 95);
         UpdateQualityLabel();
@@ -367,12 +354,10 @@ internal sealed class MainForm : Form
         _resCombo.SelectedIndex = resIndex;
 
         RefreshScreens(_settings.ScreenName);
-        RefreshIps();
     }
 
     private void ReadUiToSettings()
     {
-        _settings.Port = (int)_portNum.Value;
         _settings.ScreenName = (_screenCombo.SelectedItem as ScreenItem)?.DeviceName ?? "";
         _settings.MaxWidth = (_resCombo.SelectedItem as ResItem)?.Width ?? 1280;
         _settings.Quality = _qualityBar.Value;
@@ -400,70 +385,6 @@ internal sealed class MainForm : Form
         _screenCombo.SelectedIndex = select;
     }
 
-    private void RefreshIps()
-    {
-        string? previous = _ipCombo.SelectedItem as string;
-        var ips = GetLocalIps();
-
-        _ipCombo.Items.Clear();
-        if (ips.Count == 0)
-        {
-            _ipCombo.Items.Add("Sin conexión de red");
-        }
-        else
-        {
-            foreach (var ip in ips) _ipCombo.Items.Add(ip);
-        }
-
-        int index = previous != null ? _ipCombo.Items.IndexOf(previous) : -1;
-        _ipCombo.SelectedIndex = index >= 0 ? index : 0;
-        _copyButton.Enabled = ips.Count > 0;
-    }
-
-    /// <summary>Direcciones IPv4 de esta PC; primero WiFi y Ethernet, al final los adaptadores virtuales.</summary>
-    private static List<string> GetLocalIps()
-    {
-        var found = new List<(int Rank, string Ip)>();
-        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
-        {
-            if (ni.OperationalStatus != OperationalStatus.Up) continue;
-            if (ni.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) continue;
-
-            string name = ni.Name + " " + ni.Description;
-            bool virtualAdapter =
-                name.Contains("Virtual", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("VMware", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("Hyper-V", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("vEthernet", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("WSL", StringComparison.OrdinalIgnoreCase);
-            int rank = virtualAdapter ? 5 : ni.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 ? 0 : 1;
-
-            foreach (var unicast in ni.GetIPProperties().UnicastAddresses)
-            {
-                if (unicast.Address.AddressFamily != AddressFamily.InterNetwork) continue;
-                var bytes = unicast.Address.GetAddressBytes();
-                if (bytes[0] == 169 && bytes[1] == 254) continue; // sin DHCP
-                found.Add((rank, unicast.Address.ToString()));
-            }
-        }
-        return found.OrderBy(f => f.Rank).Select(f => f.Ip).Distinct().ToList();
-    }
-
-    private void CopyIp()
-    {
-        if (_ipCombo.SelectedItem is not string ip || _ipCombo.Items.Count == 0 || ip.StartsWith("Sin ")) return;
-        try
-        {
-            Clipboard.SetText(ip);
-            _copyButton.Text = "¡Copiado!";
-            Task.Delay(1500).ContinueWith(_ => Post(() => _copyButton.Text = "Copiar IP"));
-        }
-        catch
-        {
-            // El portapapeles puede estar ocupado; no es importante.
-        }
-    }
-
     // ---------------------------------------------------------------- Servidor
 
     private void ToggleServer()
@@ -483,24 +404,7 @@ internal sealed class MainForm : Form
     {
         ReadUiToSettings();
         _settings.Save();
-        RefreshIps();
-
-        try
-        {
-            _server.Start(_settings.Port, _settings.ScreenName, _settings.MaxWidth, _settings.Quality, _settings.Fps);
-        }
-        catch (SocketException ex)
-        {
-            string message = ex.SocketErrorCode == SocketError.AddressAlreadyInUse
-                ? $"El puerto {_settings.Port} ya está en uso. Elige otro puerto."
-                : "No se pudo iniciar: " + ex.Message;
-            AppendLog(message);
-            if (Visible) MessageBox.Show(this, message, "Monitor secundario", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-
-        var ips = GetLocalIps();
-        AppendLog(ips.Count > 0 ? "IP de esta PC: " + string.Join(", ", ips) : "Esta PC no tiene conexión de red.");
+        _server.Start(_settings.ScreenName, _settings.MaxWidth, _settings.Quality, _settings.Fps);
         SetRunning(true);
     }
 
@@ -512,33 +416,50 @@ internal sealed class MainForm : Form
         _startButton.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(_startButton.BackColor, 0.1f);
         _trayToggle.Text = running ? "Detener transmisión" : "Iniciar transmisión";
 
-        foreach (Control control in new Control[] { _screenCombo, _refreshScreens, _portNum, _resCombo, _fpsNum, _qualityBar })
+        foreach (Control control in new Control[] { _screenCombo, _refreshScreens, _resCombo, _fpsNum, _qualityBar })
             control.Enabled = !running;
 
         _statsLabel.Text = "";
-        SetStatus(running ? Warn : Off, running ? "Esperando a la iPad…" : "Detenido");
+        if (running)
+        {
+            SetStatus(Warn, "Buscando la iPad por USB…");
+        }
+        else
+        {
+            SetStatus(Off, "Detenido");
+            _usbLabel.Text = IdleHint;
+            _usbLabel.ForeColor = TextDim;
+        }
     }
 
     private void SetStatus(Color color, string text)
     {
         _dot.ForeColor = color;
         _statusLabel.Text = text;
-        _tray.Text = text.Length > 60 ? text[..60] : "Monitor secundario · " + text;
+        string tip = "Monitor secundario · " + text;
+        _tray.Text = tip.Length > 63 ? tip[..63] : tip; // NotifyIcon admite 63 caracteres
     }
 
-    private void OnClientChanged(bool connected, string endpoint)
+    private void ShowUsbStatus(bool ok, string text)
+    {
+        if (!_server.Running) return;
+        _usbLabel.Text = text;
+        _usbLabel.ForeColor = ok ? Ok : Warn;
+    }
+
+    private void OnClientChanged(bool connected)
     {
         if (!_server.Running) return;
 
         if (connected)
         {
-            SetStatus(Ok, $"iPad conectada · {endpoint}");
+            SetStatus(Ok, "iPad conectada por USB");
             if (!Visible) _tray.ShowBalloonTip(2000, "Monitor secundario", "iPad conectada", ToolTipIcon.Info);
         }
         else
         {
             _statsLabel.Text = "";
-            SetStatus(Warn, "Esperando a la iPad…");
+            SetStatus(Warn, "Buscando la iPad por USB…");
         }
     }
 

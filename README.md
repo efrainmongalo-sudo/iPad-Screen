@@ -1,9 +1,16 @@
-# iPad Air como monitor secundario de Windows
+# iPad Air como monitor secundario de Windows (por cable USB)
 
 Dos partes:
 
 - `ios/`: app para la iPad (Swift/UIKit, iOS 12). GitHub Actions genera el `.ipa` sin firmar.
 - `windows/`: programa de Windows en C# (.NET 8) con ventana, icono junto al reloj e instalador. GitHub Actions genera `MonitorSecundario-Setup.exe`.
+
+La comunicación es **solo por el cable USB**: no necesita WiFi ni red. La app de la iPad escucha en el puerto 5800 y el programa de Windows se conecta por el servicio de iTunes (*Apple Mobile Device Service*).
+
+## Requisitos
+
+- iTunes de apple.com (no la versión de Microsoft Store) instalado en la PC. Ya lo tienes si usas Sideloadly.
+- Cable USB de la iPad.
 
 ## 1. Subir cambios a GitHub
 
@@ -29,38 +36,41 @@ Todos vienen dentro de un .zip: extráelo primero.
 
 ## 3. Instalar el programa en la PC
 
-1. Ejecuta `MonitorSecundario-Setup.exe` y sigue el asistente (está en español).
-2. Opcional: marca *Iniciar con Windows* para que se abra solo, junto al reloj, y empiece a transmitir.
-3. El instalador crea una regla de firewall solo para redes privadas y solo para equipos de tu misma red local.
-4. Si Windows marca tu WiFi como red *pública*, cámbiala a *privada* en Configuración > Red e Internet.
+1. Ejecuta `MonitorSecundario-Setup.exe` y sigue el asistente (está en español). Si falta iTunes, te avisa.
+2. Opcional: marca *Iniciar con Windows* para que se abra solo, junto al reloj, y empiece a buscar la iPad.
 
 Windows puede mostrar un aviso de SmartScreen porque el programa no está firmado digitalmente: *Más información > Ejecutar de todas formas*.
 
 ## 4. Instalar la app en la iPad con Sideloadly
 
-1. Instala iTunes (la versión de apple.com, no la de Microsoft Store) y Sideloadly.
-2. Conecta la iPad por USB y toca *Confiar* en ella.
-3. En Sideloadly, arrastra `MonitorSecundario.ipa`, escribe tu Apple ID y pulsa *Start*.
-4. En la iPad: Ajustes > General > Administración de dispositivos (o Perfiles) > confía en tu Apple ID.
-5. Con un Apple ID gratuito la app caduca a los 7 días; se reinstala igual desde Sideloadly.
+1. Conecta la iPad por USB y toca *Confiar* en ella.
+2. En Sideloadly, arrastra `MonitorSecundario.ipa`, escribe tu Apple ID y pulsa *Start*. Si el inicio de sesión falla, prueba otro tipo en *Settings > Anisette Authentication*.
+3. En la iPad: Ajustes > General > Administración de dispositivos (o Perfiles) > confía en tu Apple ID.
+4. Con un Apple ID gratuito la app caduca a los 7 días; se reinstala igual desde Sideloadly.
 
 ## 5. Usarlo
 
-1. Abre **Monitor secundario** en la PC y pulsa *Iniciar transmisión*. La ventana muestra la IP que debes escribir en la iPad.
-2. PC e iPad deben estar en la misma red WiFi.
-3. En la app de la iPad escribe esa IP y el puerto (5800) y toca *Conectar*. El engranaje de la esquina superior izquierda vuelve a abrir la pantalla de conexión.
-4. Al cerrar la ventana con la X, el programa sigue transmitiendo junto al reloj. Para salir del todo: clic derecho en su icono > *Salir*.
+1. Conecta la iPad a la PC con el cable y abre la app **Monitor PC** (déjala en primer plano).
+2. En la PC abre **Monitor secundario** y pulsa *Iniciar transmisión*.
+3. La ventana indica en cada paso qué falta: iTunes, cable, app abierta. Al conectar, la iPad muestra la pantalla.
+4. Al cerrar la ventana con la X, el programa sigue funcionando junto al reloj. Para salir del todo: clic derecho en su icono > *Salir*.
+
+## Cómo se mantiene el retraso bajo
+
+- USB en lugar de WiFi: sin interferencias ni variaciones de la red.
+- Control de flujo: la iPad confirma cada cuadro que recibe y la PC nunca tiene más de 2 sin confirmar, así no se acumulan cuadros viejos.
+- Si llegan varios cuadros a la vez, la iPad solo muestra el más reciente.
+- Ajustes: bajar la resolución máxima o la calidad reduce el tiempo de compresión y de decodificación.
 
 ## Protocolo
 
+- La iPad escucha en el puerto 5800. La PC abre el túnel por usbmuxd (`127.0.0.1:27015`).
 - PC a iPad: `[4 bytes de longitud, big-endian][imagen JPEG]`, repetido.
-- iPad a PC: líneas de texto `D x y`, `M x y` y `U x y` (pulsar, mover, soltar), con x e y entre 0 y 1.
+- iPad a PC: líneas de texto `D x y`, `M x y` y `U x y` (pulsar, mover, soltar, con x e y entre 0 y 1) y `A` por cada cuadro recibido.
 
 ## Limitaciones de esta versión
 
-- No hay contraseña: cualquier equipo de la misma red local que conozca la IP y el puerto puede ver la pantalla y mover el ratón mientras la transmisión está activa. Úsalo solo en redes de confianza.
-- La captura usa GDI (`CopyFromScreen`): sirve para validar, pero no es la más rápida ni muestra el cursor. El siguiente paso es cambiarla por Desktop Duplication (DXGI).
+- La captura usa GDI (`CopyFromScreen`): sirve para validar, pero es la parte más lenta y no muestra el cursor. El siguiente paso para bajar el retraso es cambiarla por Desktop Duplication (DXGI).
 - Para que la iPad sea un monitor extendido (y no solo una copia) hace falta un driver de pantalla virtual; al instalarlo aparece en la lista *Pantalla que se comparte*.
 - El ratón no puede controlar ventanas abiertas «como administrador» si el programa corre sin esos permisos.
-- Solo WiFi. Por USB haría falta usbmuxd.
 - La app de la iPad no lleva icono.

@@ -1,6 +1,6 @@
 ; Instalador de "Monitor secundario" (Inno Setup 6)
 #define AppName "Monitor secundario"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define AppExe "MonitorServidor.exe"
 
 [Setup]
@@ -42,10 +42,16 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--minimizado"; Tasks: startup
 
 [Run]
-; Regla de firewall solo para redes privadas y solo para equipos de la misma red local.
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Monitor secundario"""; Flags: runhidden; StatusMsg: "Configurando el firewall de Windows..."
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Monitor secundario"" dir=in action=allow program=""{app}\{#AppExe}"" enable=yes profile=private remoteip=localsubnet"; Flags: runhidden
 Filename: "{app}\{#AppExe}"; Description: "Abrir Monitor secundario"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
-[UninstallRun]
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Monitor secundario"""; Flags: runhidden; RunOnceId: "QuitarReglaFirewall"
+[Code]
+// El programa habla con la iPad por USB a través del servicio que instala iTunes.
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  if not RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\Apple Mobile Device Service') then
+    MsgBox('No se encontró «Apple Mobile Device Service», que viene con iTunes.' + #13#10 + #13#10 +
+           'El programa lo necesita para comunicarse con la iPad por el cable USB. ' +
+           'Instala iTunes desde apple.com (no la versión de Microsoft Store) antes de usarlo.',
+           mbInformation, MB_OK);
+end;

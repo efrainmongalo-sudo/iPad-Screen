@@ -58,21 +58,16 @@ final class ScreenView: UIView {
     }
 }
 
-final class ViewController: UIViewController, StreamClientDelegate {
+final class ViewController: UIViewController, StreamServerDelegate {
     private let screenView = ScreenView()
-    private let client = StreamClient()
+    private let server = StreamServer()
 
     private let overlay = UIView()
-    private let hostField = UITextField()
-    private let portField = UITextField()
-    private let connectButton = UIButton(type: .system)
     private let statusLabel = UILabel()
-    private let gearButton = UIButton(type: .system)
 
     private let decodeQueue = DispatchQueue(label: "monitor.decode")
     private var decoding = false
     private var pendingFrame: Data?
-    private let defaults = UserDefaults.standard
 
     override var prefersStatusBarHidden: Bool { return true }
     override var shouldAutorotate: Bool { return true }
@@ -81,19 +76,24 @@ final class ViewController: UIViewController, StreamClientDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        client.delegate = self
+        server.delegate = self
 
         setupScreen()
         setupOverlay()
-        setupGear()
 
-        hostField.text = defaults.string(forKey: "host") ?? ""
-        let savedPort = defaults.integer(forKey: "port")
-        portField.text = String(savedPort == 0 ? 5800 : savedPort)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(appDidBecomeActive),
+                                               name: UIApplication.didBecomeActiveNotification,
+                                               object: nil)
+        server.start()
+    }
 
-        if let host = hostField.text, !host.isEmpty {
-            connect()
-        }
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func appDidBecomeActive() {
+        server.restartIfNeeded()
     }
 
     // MARK: - Interfaz
@@ -112,111 +112,55 @@ final class ViewController: UIViewController, StreamClientDelegate {
     private func setupScreen() {
         pinToEdges(screenView)
         screenView.onTouch = { [weak self] phase, point in
-            self?.client.sendTouch(phase, x: point.x, y: point.y)
+            self?.server.sendTouch(phase, x: point.x, y: point.y)
         }
     }
 
-    private func styleField(_ field: UITextField, placeholder: String, keyboard: UIKeyboardType) {
-        field.placeholder = placeholder
-        field.keyboardType = keyboard
-        field.borderStyle = .roundedRect
-        field.autocorrectionType = .no
-        field.autocapitalizationType = .none
-        field.clearButtonMode = .whileEditing
-        field.heightAnchor.constraint(equalToConstant: 44).isActive = true
-    }
-
     private func setupOverlay() {
-        overlay.backgroundColor = UIColor(white: 0, alpha: 0.88)
+        overlay.backgroundColor = UIColor(red: 0.055, green: 0.07, blue: 0.094, alpha: 1)
         pinToEdges(overlay)
-        let dismissKeyboard = UITapGestureRecognizer(target: view, action: #selector(UIView.endEditing(_:)))
-        dismissKeyboard.cancelsTouchesInView = false
-        overlay.addGestureRecognizer(dismissKeyboard)
 
         let title = UILabel()
         title.text = "Monitor secundario"
         title.textColor = .white
-        title.font = UIFont.boldSystemFont(ofSize: 26)
+        title.font = UIFont.boldSystemFont(ofSize: 30)
         title.textAlignment = .center
 
-        styleField(hostField, placeholder: "IP de la PC (ej. 192.168.1.10)", keyboard: .numbersAndPunctuation)
-        styleField(portField, placeholder: "Puerto", keyboard: .numberPad)
+        let steps = UILabel()
+        steps.text = "1. Conecta esta iPad a la PC con el cable USB.\n2. En Windows abre «Monitor secundario» y pulsa «Iniciar transmisión»."
+        steps.textColor = UIColor(white: 0.75, alpha: 1)
+        steps.font = UIFont.systemFont(ofSize: 18)
+        steps.textAlignment = .center
+        steps.numberOfLines = 0
 
-        connectButton.setTitle("Conectar", for: .normal)
-        connectButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 20)
-        connectButton.setTitleColor(.white, for: .normal)
-        connectButton.backgroundColor = UIColor(red: 0.10, green: 0.50, blue: 0.90, alpha: 1)
-        connectButton.layer.cornerRadius = 8
-        connectButton.heightAnchor.constraint(equalToConstant: 48).isActive = true
-        connectButton.addTarget(self, action: #selector(connectTapped), for: .touchUpInside)
-
-        statusLabel.text = "Desconectado"
-        statusLabel.textColor = .lightGray
+        statusLabel.text = "Iniciando…"
+        statusLabel.textColor = UIColor(red: 0.94, green: 0.71, blue: 0.24, alpha: 1)
+        statusLabel.font = UIFont.boldSystemFont(ofSize: 20)
         statusLabel.textAlignment = .center
         statusLabel.numberOfLines = 0
 
-        let stack = UIStackView(arrangedSubviews: [title, hostField, portField, connectButton, statusLabel])
+        let stack = UIStackView(arrangedSubviews: [title, steps, statusLabel])
         stack.axis = .vertical
-        stack.spacing = 14
+        stack.spacing = 24
         stack.translatesAutoresizingMaskIntoConstraints = false
         overlay.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
-            stack.topAnchor.constraint(equalTo: overlay.topAnchor, constant: 60),
-            stack.widthAnchor.constraint(equalToConstant: 340)
+            stack.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
+            stack.widthAnchor.constraint(lessThanOrEqualToConstant: 560),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: overlay.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: overlay.trailingAnchor, constant: -24)
         ])
     }
 
-    private func setupGear() {
-        gearButton.setTitle("⚙︎", for: .normal)
-        gearButton.titleLabel?.font = UIFont.systemFont(ofSize: 28)
-        gearButton.setTitleColor(.white, for: .normal)
-        gearButton.alpha = 0.35
-        gearButton.isHidden = true
-        gearButton.translatesAutoresizingMaskIntoConstraints = false
-        gearButton.addTarget(self, action: #selector(gearTapped), for: .touchUpInside)
-        view.addSubview(gearButton)
-        NSLayoutConstraint.activate([
-            gearButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
-            gearButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
-            gearButton.widthAnchor.constraint(equalToConstant: 44),
-            gearButton.heightAnchor.constraint(equalToConstant: 44)
-        ])
-    }
+    // MARK: - StreamServerDelegate
 
-    // MARK: - Acciones
-
-    @objc private func connectTapped() {
-        view.endEditing(true)
-        connect()
-    }
-
-    @objc private func gearTapped() {
-        overlay.isHidden = false
-        gearButton.isHidden = true
-    }
-
-    private func connect() {
-        let host = (hostField.text ?? "").trimmingCharacters(in: .whitespaces)
-        guard !host.isEmpty, let port = UInt16(portField.text ?? ""), port > 0 else {
-            statusLabel.text = "Escribe una IP y un puerto válidos"
-            return
-        }
-        defaults.set(host, forKey: "host")
-        defaults.set(Int(port), forKey: "port")
-        statusLabel.text = "Conectando a \(host):\(port)…"
-        client.connect(host: host, port: port)
-    }
-
-    // MARK: - StreamClientDelegate
-
-    func streamClient(_ client: StreamClient, didChangeState text: String, connected: Bool) {
+    func streamServer(_ server: StreamServer, didChangeState text: String, connected: Bool) {
         statusLabel.text = text
         overlay.isHidden = connected
-        gearButton.isHidden = !connected
     }
 
-    func streamClient(_ client: StreamClient, didReceiveFrame data: Data) {
+    func streamServer(_ server: StreamServer, didReceiveFrame data: Data) {
         show(data)
     }
 
