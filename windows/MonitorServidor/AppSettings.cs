@@ -12,7 +12,7 @@ internal sealed class AppSettings
     public bool Sharp { get; set; } = false;
 
     public int Quality { get; set; } = 70;
-    public int Fps { get; set; } = 30;
+    public int Fps { get; set; } = 60;
     public bool AutoStart { get; set; } = false;
 
     private static string FilePath => Path.Combine(

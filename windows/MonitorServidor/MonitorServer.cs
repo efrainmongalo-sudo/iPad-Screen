@@ -25,6 +25,61 @@ internal sealed class MonitorServer : IDisposable
     [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint milliseconds);
     [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint milliseconds);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CURSORINFO
+    {
+        public int cbSize;
+        public int flags;
+        public IntPtr hCursor;
+        public Point ptScreenPos;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ICONINFO
+    {
+        public bool fIcon;
+        public int xHotspot;
+        public int yHotspot;
+        public IntPtr hbmMask;
+        public IntPtr hbmColor;
+    }
+
+    [DllImport("user32.dll")] private static extern bool GetCursorInfo(ref CURSORINFO info);
+    [DllImport("user32.dll")] private static extern bool GetIconInfo(IntPtr icon, out ICONINFO info);
+    [DllImport("user32.dll")] private static extern bool DrawIconEx(IntPtr hdc, int x, int y, IntPtr icon, int width, int height, int step, IntPtr brush, int flags);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr obj);
+
+    private const int CURSOR_SHOWING = 0x1;
+    private const int DI_NORMAL = 0x3;
+
+    /// <summary>CopyFromScreen no incluye el puntero del ratón: se dibuja encima de la captura.</summary>
+    private static void DrawCursor(Graphics g, Rectangle bounds)
+    {
+        var info = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
+        if (!GetCursorInfo(ref info) || (info.flags & CURSOR_SHOWING) == 0 || info.hCursor == IntPtr.Zero) return;
+        if (!bounds.Contains(info.ptScreenPos)) return;
+
+        int hotX = 0, hotY = 0;
+        if (GetIconInfo(info.hCursor, out var icon))
+        {
+            hotX = icon.xHotspot;
+            hotY = icon.yHotspot;
+            if (icon.hbmMask != IntPtr.Zero) DeleteObject(icon.hbmMask);
+            if (icon.hbmColor != IntPtr.Zero) DeleteObject(icon.hbmColor);
+        }
+
+        IntPtr hdc = g.GetHdc();
+        try
+        {
+            DrawIconEx(hdc, info.ptScreenPos.X - bounds.X - hotX, info.ptScreenPos.Y - bounds.Y - hotY,
+                info.hCursor, 0, 0, 0, IntPtr.Zero, DI_NORMAL);
+        }
+        finally
+        {
+            g.ReleaseHdc(hdc);
+        }
+    }
+
     private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
     private const uint MOUSEEVENTF_LEFTUP = 0x0004;
 
@@ -384,6 +439,7 @@ internal sealed class MonitorServer : IDisposable
                 try
                 {
                     surface.GFull.CopyFromScreen(surface.Bounds.Location, Point.Empty, surface.Bounds.Size);
+                    DrawCursor(surface.GFull, surface.Bounds);
                 }
                 catch (System.ComponentModel.Win32Exception)
                 {
