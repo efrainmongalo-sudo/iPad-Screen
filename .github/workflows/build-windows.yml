@@ -35,8 +35,3 @@ jobs:
         with:
           name: MonitorSecundario-Instalador
           path: installer-out/MonitorSecundario-Setup.exe
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MonitorServidor-portable
-          path: out/MonitorServidor.exe

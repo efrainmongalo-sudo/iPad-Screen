@@ -93,6 +93,17 @@ internal static class VirtualDisplay
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int ChangeDisplaySettingsEx(string? lpszDeviceName, ref DEVMODE lpDevMode, IntPtr hwnd, uint dwflags, IntPtr lParam);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "ChangeDisplaySettingsExW")]
+    private static extern int ApplyPendingDisplayChanges(string? lpszDeviceName, IntPtr lpDevMode, IntPtr hwnd, uint dwflags, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern int SetDisplayConfig(uint numPathArrayElements, IntPtr pathArray, uint numModeInfoArrayElements, IntPtr modeInfoArray, uint flags);
+
+    private const uint CDS_NORESET = 0x10000000;
+    private const uint SDC_TOPOLOGY_EXTEND = 0x4;
+    private const uint SDC_APPLY = 0x80;
+    private const uint SDC_ALLOW_CHANGES = 0x400;
+
     private static DEVMODE NewDevMode()
     {
         var dm = new DEVMODE();
@@ -216,27 +227,22 @@ internal static class VirtualDisplay
             return true; // ya estaba en ese modo
         }
 
-        var dm = NewDevMode();
-        int fields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
-        if (current != null)
+        if (current == null)
         {
-            EnumDisplaySettings(device, ENUM_CURRENT_SETTINGS, ref dm);
+            current = AttachToDesktop(device);
+            if (current == null)
+            {
+                message = "Windows no pudo conectar la pantalla virtual al escritorio. Reinicia la laptop o usa Win+P > Extender.";
+                return false;
+            }
+            if (current.Value.Width == target.Width && current.Value.Height == target.Height)
+            {
+                message = note;
+                return true;
+            }
         }
-        else
-        {
-            // Monitor aún sin conectar al escritorio: se agrega a la derecha de los demás.
-            dm.dmDeviceName = device;
-            dm.dmPositionX = Screen.AllScreens.Max(s => s.Bounds.Right);
-            dm.dmPositionY = 0;
-            dm.dmBitsPerPel = 32;
-            fields |= DM_POSITION | DM_BITSPERPEL;
-        }
-        dm.dmPelsWidth = target.Width;
-        dm.dmPelsHeight = target.Height;
-        dm.dmDisplayFrequency = target.Hz;
-        dm.dmFields = fields;
 
-        int result = ChangeDisplaySettingsEx(device, ref dm, IntPtr.Zero, CDS_UPDATEREGISTRY, IntPtr.Zero);
+        int result = ApplyMode(device, target);
         if (result != DISP_CHANGE_SUCCESSFUL)
         {
             message = $"Windows no aceptó {target.Width}×{target.Height} (código {result}).";
@@ -253,6 +259,69 @@ internal static class VirtualDisplay
 
         message = note;
         return true;
+    }
+
+
+    /// <summary>Conecta al escritorio un monitor que Windows tiene desactivado (equivale a Win+P > Extender).</summary>
+    private static Rectangle? AttachToDesktop(string device)
+    {
+        SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, SDC_APPLY | SDC_TOPOLOGY_EXTEND | SDC_ALLOW_CHANGES);
+        var bounds = WaitForBounds(device, 3000);
+        if (bounds != null) return bounds;
+
+        // Alternativa: pedirlo directamente para ese monitor y aplicar los cambios pendientes.
+        var dm = NewDevMode();
+        dm.dmDeviceName = device;
+        dm.dmPositionX = Screen.AllScreens.Max(s => s.Bounds.Right);
+        dm.dmPositionY = 0;
+        dm.dmBitsPerPel = 32;
+        dm.dmPelsWidth = 1024;
+        dm.dmPelsHeight = 768;
+        dm.dmFields = DM_POSITION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
+        ChangeDisplaySettingsEx(device, ref dm, IntPtr.Zero, CDS_UPDATEREGISTRY | CDS_NORESET, IntPtr.Zero);
+        ApplyPendingDisplayChanges(null, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+        return WaitForBounds(device, 3000);
+    }
+
+    private static Rectangle? WaitForBounds(string device, int milliseconds)
+    {
+        for (int waited = 0; waited <= milliseconds; waited += 100)
+        {
+            var bounds = GetCurrentBounds(device);
+            if (bounds != null) return bounds;
+            Thread.Sleep(100);
+        }
+        return null;
+    }
+
+    /// <summary>Cambia la resolución del monitor ya conectado; prueba varias formas porque los drivers virtuales son quisquillosos.</summary>
+    private static int ApplyMode(string device, DisplayMode target)
+    {
+        int result = -1;
+        var attempts = new (bool Frequency, uint Flags)[]
+        {
+            (true, CDS_UPDATEREGISTRY),
+            (false, CDS_UPDATEREGISTRY),
+            (false, 0),
+        };
+
+        foreach (var (frequency, flags) in attempts)
+        {
+            var dm = NewDevMode();
+            if (!EnumDisplaySettings(device, ENUM_CURRENT_SETTINGS, ref dm)) continue;
+            dm.dmPelsWidth = target.Width;
+            dm.dmPelsHeight = target.Height;
+            dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+            if (frequency)
+            {
+                dm.dmDisplayFrequency = target.Hz;
+                dm.dmFields |= DM_DISPLAYFREQUENCY;
+            }
+
+            result = ChangeDisplaySettingsEx(device, ref dm, IntPtr.Zero, flags, IntPtr.Zero);
+            if (result == DISP_CHANGE_SUCCESSFUL) break;
+        }
+        return result;
     }
 
     // ---------------------------------------------------------------- Instalación y configuración

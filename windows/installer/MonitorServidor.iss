@@ -1,6 +1,6 @@
 ; Instalador de "Monitor secundario" (Inno Setup 6)
 #define AppName "Monitor secundario"
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.0"
 #define AppExe "MonitorServidor.exe"
 
 [Setup]
@@ -42,6 +42,7 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--minimizado"; Tasks: startup
 
 [Run]
+Filename: "{app}\{#AppExe}"; Parameters: "--instalar-driver"; StatusMsg: "Instalando la pantalla virtual (puede tardar un minuto)..."; Flags: waituntilterminated runhidden
 Filename: "{app}\{#AppExe}"; Description: "Abrir Monitor secundario"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [Code]
