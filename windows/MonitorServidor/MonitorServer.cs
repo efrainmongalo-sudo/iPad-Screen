@@ -173,6 +173,7 @@ internal sealed class MonitorServer : IDisposable
     private readonly object _gate = new();
     private TcpClient? _client;
     private CancellationTokenSource? _cts;
+    private bool _extended;
 
     public bool Running
     {
@@ -186,6 +187,7 @@ internal sealed class MonitorServer : IDisposable
         lock (_gate)
         {
             if (_cts != null) return;
+            _extended = !mirror;
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
             new Thread(() => UsbLoop(mirror, sharp, quality, fps, token))
@@ -211,7 +213,12 @@ internal sealed class MonitorServer : IDisposable
 
         cts?.Cancel();
         try { client?.Close(); } catch { }
-        if (cts != null) Log?.Invoke("Transmisión detenida.");
+        if (cts != null)
+        {
+            // Devuelve la laptop a una sola pantalla.
+            if (_extended) VirtualDisplay.Detach();
+            Log?.Invoke("Transmisión detenida.");
+        }
     }
 
     public void Dispose() => Stop();
@@ -325,6 +332,8 @@ internal sealed class MonitorServer : IDisposable
                     if (ReferenceEquals(_client, client)) _client = null;
                 }
             }
+
+            if (!mirror) VirtualDisplay.Detach(); // la iPad ya no está: la laptop vuelve a una sola pantalla
 
             if (!token.IsCancellationRequested)
             {

@@ -100,6 +100,7 @@ internal static class VirtualDisplay
     private static extern int SetDisplayConfig(uint numPathArrayElements, IntPtr pathArray, uint numModeInfoArrayElements, IntPtr modeInfoArray, uint flags);
 
     private const uint CDS_NORESET = 0x10000000;
+    private const uint SDC_TOPOLOGY_INTERNAL = 0x1;
     private const uint SDC_TOPOLOGY_EXTEND = 0x4;
     private const uint SDC_APPLY = 0x80;
     private const uint SDC_ALLOW_CHANGES = 0x400;
@@ -261,6 +262,44 @@ internal static class VirtualDisplay
         return true;
     }
 
+
+    private static readonly object DetachLock = new();
+
+    /// <summary>
+    /// Quita la pantalla virtual del escritorio de Windows (queda desactivada, no desinstalada), para que
+    /// la laptop vuelva a tener una sola pantalla cuando se termina de usar la iPad.
+    /// </summary>
+    public static void Detach()
+    {
+        lock (DetachLock)
+        {
+            var device = FindDevice(out bool attached);
+            if (device == null || !attached) return;
+
+            // Forma estándar de desconectar un monitor: posición y tamaño en cero, y aplicar los cambios.
+            var dm = NewDevMode();
+            dm.dmDeviceName = device;
+            dm.dmFields = DM_POSITION | DM_PELSWIDTH | DM_PELSHEIGHT;
+            ChangeDisplaySettingsEx(device, ref dm, IntPtr.Zero, CDS_UPDATEREGISTRY | CDS_NORESET, IntPtr.Zero);
+            ApplyPendingDisplayChanges(null, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+            if (WaitDetached(2000)) return;
+
+            // Alternativa: «Solo pantalla de la PC» (Win+P).
+            SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, SDC_APPLY | SDC_TOPOLOGY_INTERNAL | SDC_ALLOW_CHANGES);
+            WaitDetached(2000);
+        }
+    }
+
+    private static bool WaitDetached(int milliseconds)
+    {
+        for (int waited = 0; waited <= milliseconds; waited += 100)
+        {
+            FindDevice(out bool attached);
+            if (!attached) return true;
+            Thread.Sleep(100);
+        }
+        return false;
+    }
 
     /// <summary>Conecta al escritorio un monitor que Windows tiene desactivado (equivale a Win+P > Extender).</summary>
     private static Rectangle? AttachToDesktop(string device)
