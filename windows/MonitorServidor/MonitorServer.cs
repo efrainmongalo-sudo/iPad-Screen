@@ -480,6 +480,8 @@ internal sealed class MonitorServer : IDisposable
                 }
                 catch (UsbMuxException ex) when (ex.Code == 3)
                 {
+                    if (worker.State != WorkerState.AppClosed)
+                        Log?.Invoke(worker.Label + ": el puerto 5800 del dispositivo rechazó la conexión (la app no está abierta en primer plano o es una versión que no escucha).");
                     worker.State = WorkerState.AppClosed; // la app no está abierta en el dispositivo
                     if (WaitCancelled(token, 700)) break;
                     continue;
@@ -500,6 +502,8 @@ internal sealed class MonitorServer : IDisposable
                 }
                 catch (AppNotOpenException)
                 {
+                    if (worker.State != WorkerState.AppClosed)
+                        Log?.Invoke(worker.Label + ": la app aceptó la conexión y la cerró enseguida (bloquea la pantalla o reinstala la app).");
                     worker.State = WorkerState.AppClosed;
                     pause = 700;
                 }
