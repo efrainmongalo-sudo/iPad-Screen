@@ -270,8 +270,27 @@ internal static class VirtualDisplay
             var modes = GetModes(device);
             if (modes.Count == 0)
             {
-                message = "La pantalla virtual no tiene modos de video. Reinicia Windows o reinstala el programa.";
-                return false;
+                // Una pantalla desconectada del escritorio no siempre publica sus modos: se conecta primero
+                // (con el tamaño pedido) y se vuelve a preguntar.
+                var probe = new DisplayMode(width, height, 60);
+                var probePos = DesiredPosition(side, probe);
+                AttachToDesktop(device, probe, probePos);
+                for (int i = 0; i < 20 && modes.Count == 0; i++)
+                {
+                    modes = GetModes(device);
+                    if (modes.Count == 0) Thread.Sleep(150);
+                }
+            }
+            if (modes.Count == 0)
+            {
+                var current0 = IsAttached(device) ? GetCurrentBounds(device) : null;
+                if (current0 != null && current0.Value.Width == width && current0.Value.Height == height)
+                {
+                    message = $"Pantalla virtual: {width}×{height}.";
+                    return true;
+                }
+                // Último recurso: se intenta el tamaño pedido tal cual (el driver lo tiene en su lista).
+                modes = new List<DisplayMode> { new DisplayMode(width, height, 60) };
             }
 
             var target = ChooseMode(modes, width, height);
