@@ -45,17 +45,6 @@ Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--mi
 Filename: "{app}\{#AppExe}"; Description: "Abrir Monitor secundario"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [Code]
-// El programa habla con la iPad por USB a través del servicio que instala iTunes.
-function InitializeSetup(): Boolean;
-begin
-  Result := True;
-  if not RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\Apple Mobile Device Service') then
-    MsgBox('No se encontró «Apple Mobile Device Service», que viene con iTunes.' + #13#10 + #13#10 +
-           'El programa lo necesita para comunicarse con la iPad por el cable USB. ' +
-           'Instala iTunes desde apple.com (no la versión de Microsoft Store) antes de usarlo.',
-           mbInformation, MB_OK);
-end;
-
 // Después de copiar los archivos, instala la pantalla virtual (driver) para que todo quede listo antes de abrir el programa.
 procedure CurStepChanged(CurStep: TSetupStep);
 var
