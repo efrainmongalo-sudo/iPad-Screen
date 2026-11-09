@@ -1,0 +1,37 @@
+name: Compilar programa de Windows (instalador)
+
+on:
+  push:
+    branches: [main]
+    paths: ["windows/**", ".github/workflows/build-windows.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publicar el programa como .exe único
+        run: >
+          dotnet publish windows/MonitorServidor/MonitorServidor.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o out
+
+      - name: Instalar Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Crear el instalador
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" windows\installer\MonitorServidor.iss'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MonitorSecundario-Instalador
+          path: installer-out/MonitorSecundario-Setup.exe

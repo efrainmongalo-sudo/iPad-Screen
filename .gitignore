@@ -1,0 +1,14 @@
+ios/*.xcodeproj/
+ios/Config/Info.plist
+ios/build/
+ios/Payload/
+*.ipa
+windows/**/bin/
+windows/**/obj/
+out/
+installer-out/
+.vs/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
