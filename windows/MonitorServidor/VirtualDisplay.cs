@@ -356,8 +356,12 @@ internal static class VirtualDisplay
             // Alternativa («Solo pantalla de la PC»): solo si ya no queda ninguna otra pantalla virtual en uso.
             if (Claimed.Count == 0)
             {
-                SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, SDC_APPLY | SDC_TOPOLOGY_INTERNAL | SDC_ALLOW_CHANGES);
-                WaitDetached(device, 2000);
+                SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, SDC_APPLY | SDC_TOPOLOGY_INTERNAL);
+                if (!WaitDetached(device, 2000))
+                {
+                    RunDisplaySwitch("/internal"); // lo mismo que Win+P > Solo pantalla de la PC
+                    WaitDetached(device, 3000);
+                }
             }
         }
     }
@@ -401,13 +405,35 @@ internal static class VirtualDisplay
         if (bounds != null) return bounds;
 
         // 2) Win+P > Extender (conecta todas las desactivadas) y luego se quitan las que no se están usando.
-        SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, SDC_APPLY | SDC_TOPOLOGY_EXTEND | SDC_ALLOW_CHANGES);
-        bounds = WaitForBounds(device, 3000);
+        SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, SDC_APPLY | SDC_TOPOLOGY_EXTEND);
+        bounds = WaitForBounds(device, 2500);
+        if (bounds == null)
+        {
+            // Exactamente lo que hace Win+P > Extender.
+            RunDisplaySwitch("/extend");
+            bounds = WaitForBounds(device, 4000);
+        }
         foreach (var name in FindDevices())
         {
             if (name != device && !Claimed.Contains(name)) Detach(name);
         }
         return bounds;
+    }
+
+    /// <summary>Ejecuta DisplaySwitch.exe (el mismo programa de Win+P) con /extend o /internal.</summary>
+    private static void RunDisplaySwitch(string argument)
+    {
+        try
+        {
+            string exe = Path.Combine(Environment.SystemDirectory, "DisplaySwitch.exe");
+            var info = new ProcessStartInfo(exe, argument) { UseShellExecute = false, CreateNoWindow = true };
+            using var process = Process.Start(info);
+            process?.WaitForExit(5000);
+        }
+        catch
+        {
+            // Sin DisplaySwitch: se sigue con lo demás.
+        }
     }
 
     private static Rectangle? WaitForBounds(string device, int milliseconds)
@@ -459,28 +485,20 @@ internal static class VirtualDisplay
     // ---------------------------------------------------------------- Instalación y configuración
 
     /// <summary>Se escribe dentro del XML; si falta, la configuración es de una versión anterior y hay que reescribirla.</summary>
-    private const string ConfigMarker = "monitor-secundario-v3";
+    private const string ConfigMarker = "monitor-secundario-v4";
     private const string ConfigPath = @"C:\VirtualDisplayDriver\vdd_settings.xml";
 
     // Tamaños (horizontal). Se agregan también en vertical.
     private static readonly (int W, int H)[] DeviceSizes =
     {
-        // iPad
-        (1024, 768), (2048, 1536),   // iPad 1 a 9.ª gen. de 9.7", Air 1 y 2, mini
-        (1366, 1024), (2732, 2048),  // iPad Pro 12.9"
-        (1194, 834), (2388, 1668),   // iPad Pro 11"
-        (1180, 820), (2360, 1640),   // iPad Air 4 y 5
-        (1112, 834), (2224, 1668),   // iPad Pro 10.5"
-        (1080, 810), (2160, 1620),   // iPad 10.2"
-        (1133, 744), (2266, 1488),   // iPad mini 6
-        // Teléfonos: puntos ×2 (tamaño cómodo en Windows) y píxeles reales
-        (1136, 640), (1334, 750), (1472, 828), (1624, 750), (1792, 828), (1688, 780),
-        (1852, 856), (1704, 786), (1864, 860), (1748, 804), (1912, 880),
-        (2436, 1125), (2532, 1170), (2556, 1179), (2688, 1242), (2208, 1242), (2778, 1284), (2796, 1290),
-        // Teléfonos Android habituales (dp ×2)
-        (1560, 720), (1600, 720), (1920, 864), (1280, 720), (1480, 720), (1560, 720), (1800, 810), (2080, 960),
-        // Pantallas de escritorio de uso común
-        (1920, 1080),
+        // Lista corta a propósito: con muchas resoluciones el driver no llega a crear el monitor.
+        // iPad (puntos y píxeles reales)
+        (1024, 768), (2048, 1536),
+        (1366, 1024), (1194, 834), (1180, 820), (1112, 834), (1080, 810), (1133, 744),
+        // iPhone (puntos ×2)
+        (1334, 750), (1624, 750), (1792, 828), (1688, 780), (1852, 856),
+        // Android habituales (dp ×2)
+        (1560, 720), (1600, 720), (1920, 1080),
     };
 
     public static string BuildSettingsXml()
@@ -496,7 +514,7 @@ internal static class VirtualDisplay
         sb.AppendLine("<?xml version='1.0' encoding='utf-8'?>");
         sb.AppendLine("<vdd_settings>");
         sb.AppendLine($"  <!-- {ConfigMarker} -->");
-        sb.AppendLine("  <monitors><count>2</count></monitors>");
+        sb.AppendLine("  <monitors><count>1</count></monitors>");
         sb.AppendLine("  <gpu><friendlyname>default</friendlyname></gpu>");
         sb.AppendLine("  <global><g_refresh_rate>60</g_refresh_rate></global>");
         sb.AppendLine("  <resolutions>");
